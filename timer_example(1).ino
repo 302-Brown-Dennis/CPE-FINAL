@@ -4,14 +4,12 @@ volatile unsigned char *myTCCR1C = (unsigned char *) 0x82;
 volatile unsigned char *myTIMSK1 = (unsigned char *) 0x6F;
 volatile unsigned int  *myTCNT1  = (unsigned  int *) 0x84;
 volatile unsigned char *myTIFR1 =  (unsigned char *) 0x36;
-volatile unsigned char *portDDRB = (unsigned char *) 0x24;
-volatile unsigned char *portB =    (unsigned char *) 0x25;
 
 
-
-
-void setup() 
-
+void setup() {
+  *myTCCR1A = 0x00;
+  *myTCCR1B = 0x00;
+  *myTCCR1C = 0x00;
   Serial.begin(9600);
 }
 void loop() 
