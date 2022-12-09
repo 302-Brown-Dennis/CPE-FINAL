@@ -1,0 +1,31 @@
+void Running_state()
+{
+
+//turn on fan motor
+//temp & huidity displayed
+//blue led
+
+if(Temp <= Thresh_Temp)
+  {
+   // back to Idle state
+  }
+else_if(water_lev < Thresh_water)
+  {
+   // error state
+  }
+ else()
+ {
+ //repeat
+ }
+
+}
+
+void Error_state()
+{
+
+//Display error message
+//red led
+
+//button press to idle
+
+}
