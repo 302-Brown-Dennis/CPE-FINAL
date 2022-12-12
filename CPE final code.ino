@@ -1,3 +1,8 @@
+/*
+Team: Dennis Brown, Dominic Bacci, Josh Rhoades
+Team Name: JDD
+Date: 12/12/2022
+*/
 #include <Wire.h>
 #include <LiquidCrystal.h>
 #include <Adafruit_Sensor.h>
@@ -20,9 +25,7 @@ Stepper stepper(STEPS, 25, 29, 27, 31);
 LiquidCrystal lcd(2, 3, 9, 10, 11, 12);
 DHT dht(DHTPIN, DHTTYPE);
 RTC_DS1307 rtc;
-//enable 42 pL7
-//dira 40 pg1
-//dirb 38 pd7
+
 volatile unsigned char *myUCSR0A = (unsigned char *)0x00C0;
 volatile unsigned char *myUCSR0B = (unsigned char *)0x00C1;
 volatile unsigned char *myUCSR0C = (unsigned char *)0x00C2;
@@ -43,62 +46,80 @@ volatile unsigned char* port_e  = (unsigned char*) 0x2E;
 volatile unsigned char* ddr_g  = (unsigned char*) 0x33; 
 volatile unsigned char* port_g  = (unsigned char*) 0x34; 
 volatile unsigned char* pin_h  = (unsigned char*) 0x100; 
+volatile unsigned char* pin_l  = (unsigned char*) 0x109; 
+unsigned int water_lvl = 0;
+unsigned int water_lvl_threshold = 300;
 int ledState = 1;
-float temp_threshold = 80.50;
+float temp_threshold = 81;
 float temp;
 float humid;
-int previous = 0;
-int Pval = 0;
 
+int previous = 0;
 int potVal = 0;
+
 bool disable_stat = true;
 bool running = false;
 bool state_change = false;
 bool lcd_flag = false;
 bool idle = false;
+bool error = false;
+
 int d_cur_state;
+int err_state_pin;
+int prev_err_state;
 int d_prev_state;
+/*
+* SETUP
+*/
 void setup() {
 
-rtc.begin();
-rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  rtc.begin();
+  rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
 
   U0init(9600);
   
   adc_init();
-    lcd.begin(16, 2);
+  lcd.begin(16, 2);
   dht.begin();
   stepper.setSpeed(200);
-   set_PH_as_input(3);
+  set_PH_as_input(3);
+  set_PL_as_input(1);
   set_PL_as_output(7);
   set_PD_as_output(7);
   set_PG_as_output(1);
-
+  set_PG_as_output(5);
   set_PH_as_output(4); 
   set_PH_as_output(5);
-   set_PE_as_output(3); 
+  set_PE_as_output(3); 
 
   //blue light
-   write_ph(5,0);
+  write_ph(5,0);
    //green light
-    write_pe(3,0);
+  write_pe(3,0);
+    //red light
+  write_pg(5,0);
     //yellow light
-    write_ph(4,ledState);
+  write_ph(4,ledState);
     
-    d_cur_state = (*pin_h & 0x108);
-
+  d_cur_state = (*pin_h & 0x108);
+  err_state_pin = (*pin_l & 0x10B);
 
 
 }
-
+/*
+* MAIN LOOP
+*/
 void loop() {
- 
+
 if(idle == true && lcd_flag == false)
   set_lcd();
 
 
   else if(disable_stat == true)
   {
+    if(state_change == false)
+   print_time();
+
      disable_state();
     
   }
@@ -118,16 +139,27 @@ if(idle == true && lcd_flag == false)
 
    idle_state();
  }
+ else if(error == true){
+   
+     if(state_change == false)
+   print_time();
+
+   error_state();
+ }
   
 }
+/*
+* RUNNING STATE
+*/
 void running_state(){
 
 read_stepper();
  write_pl(7,1);
- write_pg(1,1);  
+ write_pd(7,1);
+  
  write_ph(5,1);
  lcd_display();
- 
+ water_sense();
  if(temp <= temp_threshold){
    idle = true;
     running = false;
@@ -136,9 +168,30 @@ read_stepper();
      write_pl(7,0);
       write_pg(1,0);
   }
+  if(water_lvl < water_lvl_threshold){
+    idle = false;
+    running = false;
+    state_change = false;
+    error = true;    
+    write_pl(7,0);
+    write_ph(5,0);
+    write_pg(5,1);
+    lcd.clear();
+    lcd.write("error");
+    lcd.setCursor(0, 2);
+    lcd.write("Water lvl low");
+  }
+  if(start_stop()){
+  running = false;
+  disable_stat =  true;
+  write_pl(7,0);
+    write_ph(5,0);
+  return;
+}
 }
 
 void set_lcd(){
+  lcd.clear();
 lcd.print("Temp:  Humidity:");
 lcd_flag = true;
 }
@@ -148,47 +201,96 @@ lcd_flag = true;
 void idle_state(){
   //Serial.println("idleing! ");
  read_stepper();
+ 
 lcd_display();
- // water_sense();
+water_sense();
 
   if(temp > temp_threshold){
     write_pe(3,0);
     running = true;
     state_change = false;
   }
-  
+    if(water_lvl <= water_lvl_threshold){
+    idle = false;
+    running = false;
+    state_change = false;
+    error = true;    
+    write_pl(7,0);
+     write_pe(3,0);
+    write_pg(5,1);
+    lcd.clear();
+    lcd.write("error");
+    lcd.setCursor(0, 2);
+    lcd.write("Water lvl low");
+  }
+  start_stop();
 }
+/*
+* DISABLED STATE
+*/
 void disable_state(){
 //Serial.println("DISABLED! ");
+lcd.clear();
+lcd_flag = false;
  d_prev_state = d_cur_state;
   d_cur_state = (*pin_h & 0x108);
+  write_ph(4,1);
 
   if(d_prev_state >= 1 && d_cur_state == 0) {
-
-  
-  write_ph(4,0);
-    // toggle state of LED
+    write_pe(3,1);
+    write_ph(4,0);
     idle = true;
-  
-disable_stat = false;
-    // control LED arccoding to the toggled state
-    
+    disable_stat = false;
+    state_change = false;
   }
+
 
 }
-void lcd_display(){
-    lcd.setCursor(0, 1);
+/*
+* ERROR STATE
+*/
+void error_state(){
+  start_stop();
+  read_stepper();
+  prev_err_state = err_state_pin;
+  err_state_pin = (*pin_l & 0x10B);
 
-  humid = dht.readHumidity();
-  temp = dht.readTemperature(true);
-   if (isnan(humid) || isnan(temp)) {
-    lcd.print("ERROR");
+  if(prev_err_state >= 1 && err_state_pin == 0) {
+
+  
+  write_ph(4,1);
+  write_pg(5,0);
+    // toggle state of LED
+    idle = true;
+    lcd_flag = false;
+    state_change = false;
+    disable_stat = false;
+    running = false;
+    
+  }
+  //Serial.println("Error state! ");
+}
+/*
+* LCD DISPLAY
+*/
+void lcd_display(){
+  lcd.setCursor(0, 1);
+
+  float h = dht.readHumidity();
+  float t = dht.readTemperature(true);
+   if (isnan(h) || isnan(t)) {
+    //lcd.print("ERROR");
     return;
   }
-   lcd.print(temp);
+  temp = t;
+  humid = h;
+  lcd.print(temp);
   lcd.setCursor(7,1);
   lcd.print(humid);
 }
+/*
+* READ STEPPER MOTOR
+*/
 void read_stepper(){
   unsigned int adc_reading = adc_read(7);
 potVal = map(adc_reading,0,1024,0,500);
@@ -199,6 +301,63 @@ if (potVal<previous)
  previous = potVal;
  
 }
+/*
+* WATER SENSOR
+*/
+void water_sense(){
+
+  unsigned int adc_reading = adc_read(8);
+  water_lvl = adc_reading;
+  
+}
+/*
+* START STOP BUTTON
+*/
+bool start_stop()
+{
+   d_prev_state = d_cur_state;
+  d_cur_state = (*pin_h & 0x108);
+
+  if(d_prev_state >= 1 && d_cur_state == 0) {
+
+  if(idle == true){
+    write_ph(4,1);
+    write_pe(3,0);
+    state_change = false;
+    disable_stat = true;
+    idle = false;
+    return true;
+  }
+  else if(running == true){
+    write_ph(4,1);
+    write_ph(5,0);
+     write_pl(7,0);
+     write_pd(7,0);
+    
+    state_change = false;
+    disable_stat = true;
+    running = false;
+    return true;
+  }
+  else if(error == true){
+    write_ph(4,1);
+    write_pg(5,0);
+    state_change = false;
+    disable_stat = true;
+    error = false;
+    return true;
+  }
+  }
+  return false;
+}
+/*
+* BELOW:
+* PORT SETTING I/O
+* PORT WRITING
+* PRINT INTS
+* PRINT CHARS
+* PRINT TIME
+*/
 void set_PH_as_output(unsigned char pin_num)
 {
     *ddr_h |= 0x01 << pin_num;
@@ -241,6 +400,17 @@ void write_pg(unsigned char pin_num, unsigned char state)
     *port_g |= 0x01 << pin_num;
   }
 }
+void write_pd(unsigned char pin_num, unsigned char state)
+{
+  if(state == 0)
+  {
+    *port_d &= ~(0x01 << pin_num);
+  }
+  else
+  {
+    *port_d |= 0x01 << pin_num;
+  }
+}
 void write_pe(unsigned char pin_num, unsigned char state)
 {
   if(state == 0)
@@ -266,6 +436,10 @@ void write_ph(unsigned char pin_num, unsigned char state)
 void set_PH_as_input(unsigned char pin_num)
 {
     *pin_h |= 0x01 << pin_num;
+}
+void set_PL_as_input(unsigned char pin_num)
+{
+    *pin_l |= 0x01 << pin_num;
 }
 void print_time(){
   DateTime now = rtc.now();
